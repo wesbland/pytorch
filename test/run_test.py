@@ -1636,6 +1636,7 @@ def check_pip_packages() -> None:
             sys.exit(1)
 
 _DEP_MODULES_CACHE = {}
+EXCLUDE_SUBMODULES = []
 def get_dep_modules(test):
     # Cache results in case of repitition
     if test in _DEP_MODULES_CACHE:
@@ -1678,7 +1679,7 @@ def get_dep_modules(test):
                 "networkx",
                 "_pytest",
                 "future",
-            ],
+            ] + EXCLUDE_SUBMODULES,
         )
         # HACK: some platforms default to ascii, so we can't just run_script :(
         with open(test_location, 'r', encoding='utf-8') as fp:
@@ -1726,6 +1727,8 @@ def main():
     check_pip_packages()
 
     options = parse_args()
+    installed_packages = [i.key for i in pkg_resources.working_set if i.key != "torch"]
+    EXCLUDE_SUBMODULES = installed_packages
 
     # Include sharding info in all metrics
     which_shard, num_shards = get_sharding_opts(options)
