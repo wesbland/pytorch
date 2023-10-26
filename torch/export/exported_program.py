@@ -903,6 +903,8 @@ class ExportedProgram:
             _AddRuntimeAssertionsForConstraintsPass,
         )
 
+        print("RANGE CONSTRAINTS", self.range_constraints)
+
         # TODO(zhxchen17) Don't generate a runtime graph on the fly.
         _assertion_graph = torch.fx.GraphModule({}, torch.fx.Graph())
         for p in self.graph.nodes:
