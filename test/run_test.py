@@ -1728,7 +1728,7 @@ def main():
 
     options = parse_args()
     installed_packages = [i.key for i in pkg_resources.working_set if i.key != "torch"]
-    EXCLUDE_SUBMODULES = installed_packages
+    EXCLUDE_SUBMODULES.extend(installed_packages)
 
     # Include sharding info in all metrics
     which_shard, num_shards = get_sharding_opts(options)
