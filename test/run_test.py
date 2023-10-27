@@ -1739,7 +1739,7 @@ def main():
     selected_tests = get_selected_tests(options)
     for test in selected_tests:
         determine_target(f"test/{test.replace('.', '/')}.py")
-    print(json.dumps(_DEP_MODULES_CACHE, indent=2))
+    print("_DEP_MODULES_CACHE print:" + json.dumps(_DEP_MODULES_CACHE))
     exit(0)
 
     if options.coverage and not PYTORCH_COLLECT_COVERAGE:
