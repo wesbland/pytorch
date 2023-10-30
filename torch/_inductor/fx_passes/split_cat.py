@@ -28,6 +28,7 @@ from ..pattern_matcher import (
 )
 from .pre_grad import (
     merge_getitem_cat_pass,
+    merge_sigmoid_unsqueeze_pass,
     merge_splits_pass,
     normalization_pass,
     split_cat_pass,
@@ -45,6 +46,7 @@ _TransformParam: TypeAlias = Tuple[
 ]
 _Range: TypeAlias = Tuple[int, int]
 
+torch.ops.load_library("//caffe2/torch/fb/sparsenn:sparsenn_operators")
 
 def _get_split_args_default(split_node):
     input_kwarg = "tensor"
@@ -1134,3 +1136,43 @@ def merge_getitem_cat(match: Match, split_sections: List[int], dim: int):
                 split_sections = new_split_sections
 
                 counters["inductor"]["getitem_cat_merged"] += 1
+
+
+# We find the pattern sigmoid -> unsqueeze_n_times(sigmoid, 0), which
+# could be eliminated to further enable the swish layernorm group fusion
+@register_graph_pattern(
+    CallFunction(
+        torch.ops.fb.unsqueeze_n_times,
+        CallFunction(
+            torch.sigmoid,
+            Ignored(),
+            _users=1,
+        ),
+        0,
+        _users=1,
+    ),
+    pass_dict=merge_sigmoid_unsqueeze_pass,
+    extra_check=config_flag("batch_fusion"),
+)
+def merge_sigmoid_unsqueeze(match: Match, *args, **kwargs):
+    graph = match.graph
+    sigmoid_node = next(node for node in match.nodes if node.target == torch.sigmoid)
+    # find the user of the sigmoid node
+    unsqueeze_user = next(iter(sigmoid_node.users.keys()))
+    assert len(sigmoid_node.users) == 1 and unsqueeze_user.target == torch.ops.fb.unsqueeze_n_times, "The user of the sigmoid node should be only one unsqueeze node!"
+    # find the user of the unsqueeze_user
+    assert len(unsqueeze_user.users) == 1, "There should be only one user of unsqueeze node!"
+    mul_user = next(iter(unsqueeze_user.users.keys()))
+    # update the input of the mul node
+    idx = 0
+    for arg in mul_user.args:
+        if arg == unsqueeze_user:
+            mul_user.update_arg(idx, sigmoid_node)
+            break
+        idx += 1
+    unsqueeze_user.replace_all_uses_with(sigmoid_node)
+    sigmoid_node.meta.update(unsqueeze_user.meta)
+    # erase unsqueeze node
+    graph.erase_node(unsqueeze_user)
+
+    counters["inductor"]["merge_sigmoid_unsqueeze"] += 1

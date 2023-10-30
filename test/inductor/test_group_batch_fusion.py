@@ -1,6 +1,8 @@
 # Owner(s): ["module: inductor"]
 
 import functools
+import operator
+import random
 import unittest
 
 import torch
@@ -20,6 +22,7 @@ except Exception:
 
 requires_cuda = functools.partial(unittest.skipIf, not HAS_CUDA, "requires cuda")
 
+torch.ops.load_library("//caffe2/torch/fb/sparsenn:sparsenn_operators")
 
 class MyModule(torch.nn.Module):
     def __init__(self, z: int, has_bias: bool, device="cuda") -> None:
@@ -213,7 +216,7 @@ class MyModule6(torch.nn.Module):
 
 
 class MyModule7(torch.nn.Module):
-    def __init__(self, device, has_bias=True):
+    def __init__(self, device):
         super().__init__()
         self.device = device
 
@@ -221,6 +224,100 @@ class MyModule7(torch.nn.Module):
         inputs = torch.unbind(x.to(self.device), dim=0)
         relu = [torch.nn.functional.relu(inputs[i]) for i in range(len(inputs))]
         return torch.stack(relu, dim=0)
+
+
+class TestGroupSwishLayernorm(torch.nn.Module):
+    def __init__(self, z: int, device: str) -> None:
+        super().__init__()
+        self.device = device
+        self.linear_w0 = torch.nn.Parameter(torch.randn(z, z, device=self.device))
+        self.linear_w1 = torch.nn.Parameter(torch.randn(z, z, device=self.device))
+        self.linear_w2 = torch.nn.Parameter(torch.randn(z, z, device=self.device))
+        self.linear_w3 = torch.nn.Parameter(torch.randn(z, z, device=self.device))
+        self.linear_w4 = torch.nn.Parameter(torch.randn(z, z, device=self.device))
+        self.linear_w5 = torch.nn.Parameter(torch.randn(z, z, device=self.device))
+
+        self.linear_b0 = torch.nn.Parameter(torch.randn(z, device=self.device))
+        self.linear_b1 = torch.nn.Parameter(torch.randn(z, device=self.device))
+        self.linear_b2 = torch.nn.Parameter(torch.randn(z, device=self.device))
+        self.linear_b3 = torch.nn.Parameter(torch.randn(z, device=self.device))
+        self.linear_b4 = torch.nn.Parameter(torch.randn(z, device=self.device))
+        self.linear_b5 = torch.nn.Parameter(torch.randn(z, device=self.device))
+
+        self.ln_w0 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(1.0))
+        self.ln_w1 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(1.0))
+        self.ln_w2 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(1.0))
+        self.ln_w3 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(1.0))
+        self.ln_w4 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(1.0))
+        self.ln_w5 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(1.0))
+
+        self.ln_b0 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(0.0))
+        self.ln_b1 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(0.0))
+        self.ln_b2 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(0.0))
+        self.ln_b3 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(0.0))
+        self.ln_b4 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(0.0))
+        self.ln_b5 = torch.nn.Parameter(torch.empty([z], device=self.device).fill_(0.0))
+
+    def forward(
+        self,
+        t0: torch.Tensor,
+        t1: torch.Tensor,
+        t2: torch.Tensor,
+        t3: torch.Tensor,
+        t4: torch.Tensor,
+        t5: torch.Tensor,
+    ) -> torch.Tensor:
+        t0 = t0.to(self.device)
+        t1 = t1.to(self.device)
+        t2 = t2.to(self.device)
+        t3 = t3.to(self.device)
+        t4 = t4.to(self.device)
+        t5 = t5.to(self.device)
+        a0 = torch.nn.functional.linear(t0, self.linear_w0, self.linear_b0)
+        a1 = torch.nn.functional.linear(t1, self.linear_w1, self.linear_b1)
+        a2 = torch.nn.functional.linear(t2, self.linear_w2, self.linear_b2)
+        a3 = torch.nn.functional.linear(t3, self.linear_w3, self.linear_b3)
+        a4 = torch.nn.functional.linear(t4, self.linear_w4, self.linear_b4)
+        a5 = torch.nn.functional.linear(t5, self.linear_w5, self.linear_b5)
+
+        b0 = torch.nn.functional.layer_norm(
+            a0, a0.size()[1:], weight=self.ln_w0, bias=self.ln_b0
+        )
+        b1 = torch.nn.functional.layer_norm(
+            a1, a1.size()[1:], weight=self.ln_w1, bias=self.ln_b1
+        )
+        b2 = torch.nn.functional.layer_norm(
+            a2, a2.size()[1:], weight=self.ln_w2, bias=self.ln_b2
+        )
+        b3 = torch.nn.functional.layer_norm(
+            a3, a3.size()[1:], weight=self.ln_w3, bias=self.ln_b3
+        )
+        b4 = torch.nn.functional.layer_norm(
+            a4, a4.size()[1:], weight=self.ln_w4, bias=self.ln_b4
+        )
+        b5 = torch.nn.functional.layer_norm(
+            a5, a5.size()[1:], weight=self.ln_w5, bias=self.ln_b5
+        )
+
+        c0 = torch.sigmoid(b0)
+        c1 = torch.sigmoid(b1)
+        c2 = torch.sigmoid(b2)
+        c3 = torch.sigmoid(b3)
+        c4 = torch.sigmoid(b4)
+
+        c0 = torch.ops.fb.unsqueeze_n_times(c0, 0)
+        c1 = torch.ops.fb.unsqueeze_n_times(c1, 0)
+        c2 = torch.ops.fb.unsqueeze_n_times(c2, 0)
+        c3 = torch.ops.fb.unsqueeze_n_times(c3, 0)
+        c4 = torch.ops.fb.unsqueeze_n_times(c4, 0)
+
+        mul_op = random.choice([torch.mul, operator.mul])
+        d0 = mul_op(a0, c0)
+        d1 = mul_op(c1, a1)
+        d2 = mul_op(a2, c2)
+        d3 = mul_op(a3, c3)
+        d4 = mul_op(a4, c4)
+        return d0 + d1 + d2 + d3 + d4 + b5
 
 
 @requires_cuda()
@@ -434,6 +531,31 @@ class TestGroupBatchFusion(TestCase):
         self.compare_gradients(module, traced, rtol=1e-8, atol=1e-8)
         counters.clear()
 
+
+
+    @unittest.skipIf(not has_fbgemm, "requires fbgemm")
+    def test_group_swish_layer_norm_pre_grad_fusion(self):
+        counters.clear()
+        Z = 16
+        module = TestGroupSwishLayernorm(Z, "cuda")
+        input = [
+            torch.randn(4, Z, requires_grad=True, device="cuda"),
+            torch.randn(4, Z, requires_grad=True, device="cuda"),
+            torch.randn(4, Z, requires_grad=True, device="cuda"),
+            torch.randn(4, Z, requires_grad=True, device="cuda"),
+            torch.randn(4, Z, requires_grad=True, device="cuda"),
+            torch.randn(4, Z, requires_grad=True, device="cuda"),
+        ]
+        traced = torch.compile(module)
+        ref = module(*input)
+        res = traced(*input)
+        self.compare_pred(module, traced, input)
+        self.assertEqual(counters["inductor"]["merge_sigmoid_unsqueeze"], 5)
+        ref.sum().backward()
+        res.sum().backward()
+        self.compare_parameters(module, traced, rtol=1e-8, atol=1e-8)
+        self.compare_gradients(module, traced, rtol=1e-8, atol=1e-8)
+        counters.clear()
 
 if __name__ == "__main__":
     run_tests()
