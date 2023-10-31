@@ -2756,6 +2756,7 @@ def index_output_size_and_inner_fn(
     indices_loaders,
     indexed_size,
     x_loader,
+    check,
 ):
     # Note that behavior of indexing differs when there are non consecutive
     # tensors. In this case, the tensor index is pulled to the beginning.
@@ -2845,6 +2846,7 @@ def index_impl(x, indices, check):
         indices_loaders,
         indexed_size,
         x_loader,
+        check=check,
     )
 
     return Pointwise.create(
@@ -2908,6 +2910,11 @@ def index_put_fallback(self, indices, values, accumulate):
 @register_lowering(aten.index_put_, type_promotion_kind=None)
 def index_put_(self, indices, values, accumulate=False):
     return index_put_impl_(self, indices, values, accumulate, check=True)
+
+
+@register_lowering(inductor_prims._unsafe_index_put_, type_promotion_kind=None)
+def _unsafe_index_put_(self, indices, values, accumulate=False):
+    return index_put_impl_(self, indices, values, accumulate, check=False)
 
 
 def index_put_impl_(self, indices, values, accumulate, check):
@@ -2975,6 +2982,7 @@ def index_put_impl_(self, indices, values, accumulate, check):
         indices_loaders,
         indexed_size,
         None,
+        check=check,
     )
 
     values = expand(values, expected_vals_size)
