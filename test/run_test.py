@@ -49,6 +49,7 @@ from tools.stats.upload_metrics import add_global_metric, emit_metric
 from tools.testing.target_determination.determinator import (
     AggregatedHeuristics,
     get_test_prioritizations,
+    get_experimental_rankings,
 )
 
 from tools.testing.test_run import TestRun
@@ -1800,6 +1801,10 @@ def main():
 
                 print_to_stderr("Emiting td_test_failure_stats")
                 emit_metric("td_test_failure_stats", test_stats)
+
+                # Is this an excessive number of things to emit? probably.  But
+                # it was also really easy to write
+                emit_metric("td_number_ranking_experiment", get_experimental_rankings())
 
     if len(all_failures):
         for _, err in all_failures:
