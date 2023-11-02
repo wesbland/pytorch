@@ -6,6 +6,7 @@
 #include <iostream>
 #include <list>
 #include <mutex>
+#include <queue>
 #include <thread>
 #include <unordered_map>
 
@@ -43,6 +44,9 @@ constexpr const char* NCCL_ASYNC_ERROR_HANDLING = "NCCL_ASYNC_ERROR_HANDLING";
 constexpr const char* NCCL_DESYNC_DEBUG = "NCCL_DESYNC_DEBUG";
 
 constexpr const char* NCCL_ENABLE_TIMING = "NCCL_ENABLE_TIMING";
+
+constexpr const char* TORCH_NCCL_ENABLE_MONITORING =
+    "TORCH_NCCL_ENABLE_MONITORING";
 
 constexpr const char* NCCL_BACKEND_NAME = "nccl";
 
@@ -630,6 +634,12 @@ class TORCH_API ProcessGroupNCCL : public Backend {
   void logWorkEnd(WorkNCCL& work);
 
  protected:
+  // Function that runs as part of a separate thread aside from watchdog
+  // thread because we need to check the heartbeat from watchdog thread
+  // so that when we get stuck in a collective or watchdog itself hangs,
+  // we can dump the debugging information and abort the process.
+  virtual void ncclCommsMonitor();
+
   static const int64_t kWatchdogThreadSleepMillis;
 
   // The store is used to broadcast the NCCL unique ID of rank 0.
@@ -691,6 +701,16 @@ class TORCH_API ProcessGroupNCCL : public Backend {
 
   // Mutex to guard maps like devNCCLCommMap_ and ncclIdToCommMap_.
   std::mutex mutex_;
+
+  // Heartbeat of watchdog thread.
+  std::atomic<int> heartbeat_;
+
+  std::atomic<bool> monitorThreadEnabled_;
+
+  // Monitor thread which checks the heartbeat of Watchdog thread.
+  // If the monitor thread finds there is no heartbeat, it will dump debug info
+  // and then kill the watchdog thread to avoid hang.
+  std::thread ncclCommMonitorThread_;
 
   // Watchdog thread which looks for errors on the cached NCCL communicators.
   std::thread ncclCommWatchdogThread_;
@@ -796,6 +816,8 @@ class TORCH_API ProcessGroupNCCL : public Backend {
   uint64_t seq_{0};
 
   std::exception_ptr watchDogException_ = nullptr;
+
+  std::exception_ptr monitorException_ = nullptr;
 
 #ifdef USE_NCCL_WITH_UCC
   // ProcessGroupUCC shared library handle and ProcessGroup pointer
