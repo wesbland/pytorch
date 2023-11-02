@@ -1,4 +1,5 @@
 import functools
+
 import inspect
 import operator
 import types
@@ -30,7 +31,7 @@ from .. import config, variables
 from .._trace_wrapped_higher_order_op import trace_wrapped
 
 from ..exc import unimplemented, UserError, UserErrorType
-from ..guards import GuardBuilder
+from ..guards import GuardBuilder, install_guard
 from ..source import AttrSource
 from ..utils import (
     fqn,
@@ -201,12 +202,8 @@ class TensorVariable(VariableTracker):
         from .builder import VariableBuilder
 
         attr_source = AttrSource(self.source, name)
-        has_attr_guard = attr_source.make_guard(GuardBuilder.HASATTR)
-        return (
-            VariableBuilder(tx, attr_source)(real_value)
-            .add_options(self)
-            .add_guard(has_attr_guard)
-        )
+        install_guard(attr_source.make_guard(GuardBuilder.HASATTR))
+        return VariableBuilder(tx, attr_source)(real_value).add_options(self)
 
     def var_getattr(self, tx, name):
         from . import ConstantVariable, TorchVariable
@@ -249,7 +246,7 @@ class TensorVariable(VariableTracker):
         # In some cases, a <tensor>.<attr> guard can be evaluated first, and break if
         # <tensor> is later changed to another type
         if result is not None and self.source is not None:
-            result = result.add_guard(self.make_guard(GuardBuilder.TYPE_MATCH))
+            install_guard(self.make_guard(GuardBuilder.TYPE_MATCH))
 
         # It's hard to get inplace view (metadata mutation) on graph input work properly across
         # dynamo/aot/inductor, just fall back.
@@ -602,7 +599,6 @@ class TensorVariable(VariableTracker):
                 unimplemented(
                     "boolean masking setitem backwards requires dynamic shapes"
                 )
-            tx.output.guards.update(options["guards"])
             tx.output.create_proxy(
                 "call_function",
                 operator.setitem,
