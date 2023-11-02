@@ -627,6 +627,9 @@ class InstructionTranslatorBase(Checkpointable[InstructionTranslatorGraphState])
         """
         A call to some user defined function by inlining it.
         """
+        fn, args, kwargs = VariableTracker.apply(
+            lambda x: x.realize(), (fn, args, kwargs)
+        )
         state = self.copy_graphstate()
         try:
             result = InliningInstructionTranslator.inline_call(self, fn, args, kwargs)
@@ -2083,19 +2086,16 @@ class InstructionTranslator(InstructionTranslatorBase):
             vars.extend(cells_and_freevars)
             cells_and_freevars_set = set(cells_and_freevars)
 
-            self.symbolic_locals = collections.OrderedDict(
-                (
-                    k,
-                    VariableBuilder(
-                        self,
-                        LocalSource(k, cell_or_freevar=k in cells_and_freevars_set),
-                    )(f_locals[k]),
+            self.symbolic_locals = {
+                k: variables.LazyVariableTracker.create(
+                    f_locals[k],
+                    source=LocalSource(k, cell_or_freevar=k in cells_and_freevars_set),
                 )
                 for k in vars
                 if k in f_locals
-            )
+            }
             if export:
-                # export gets super confused if we never realize unused inputs
+                # export gets confused if we never realize unused inputs
                 # in export mode just eagerly realize everything
                 self.symbolic_locals = VariableTracker.apply(
                     lambda x: x.realize(), self.symbolic_locals
