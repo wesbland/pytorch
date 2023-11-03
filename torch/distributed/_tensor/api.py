@@ -111,18 +111,13 @@ class _FromTorchTensor(torch.autograd.Function):
         ctx.previous_placement = placements
         ctx.previous_device_mesh = device_mesh
 
-        if shape and stride:
-            tensor_shape = shape
-            tensor_stride = stride
-        else:
+        if not shape or not stride:
             # if it's not by default run_check, we assume user is certain that each
             # rank has the same tensor shape, and we just use that to calculate the
             # global shape
             tensor_shape, tensor_stride = compute_global_tensor_info(
                 input, device_mesh, placements
             )
-            tensor_shape = torch.Size(tensor_shape)
-            tensor_stride = tuple(tensor_stride)
 
         if device_mesh.get_coordinate() is None:
             # if the global rank is not participating in the device mesh, we
@@ -144,12 +139,12 @@ class _FromTorchTensor(torch.autograd.Function):
             input.view_as(input),
             device_mesh,
             placements,
-            shape=tensor_shape,
+            shape=torch.Size(shape if shape else tensor_shape),
             dtype=input.dtype,
             # requires_grad of the dist tensor depends on if input
             # requires_grad or not
             requires_grad=input.requires_grad,
-            stride=tensor_stride,
+            stride=tuple(stride if stride else tensor_stride),
         )
         return dist_tensor
 
@@ -169,7 +164,7 @@ class _FromTorchTensor(torch.autograd.Function):
 
         # TODO: backward is also differentiable now, add a test
         # to test higher level gradients.
-        return grad_output.to_local(), None, None, None
+        return grad_output.to_local(), None, None, None, None, None
 
 
 class DTensor(torch.Tensor):  # pyre-ignore[13]: pyre is bad at __new__
