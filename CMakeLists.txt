@@ -479,6 +479,17 @@ if(LINUX)
 endif()
 
 if(MSVC)
+  # MSVC by default does not apply the correct __cplusplus version as specified by the C++ standard
+  # because MSVC is not a completely compliant implementation. This option forces MSVC to use the
+  # appropriate value given the requested --std option. This fixes a compilation issue mismatch
+  # between GCC/Clang and MSVC.
+  #
+  # error : a constexpr function cannot have a nonliteral return type "dim3"
+  #
+  # See https://developercommunity.visualstudio.com/t/msvc-incorrectly-defines-cplusplus/139261
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:__cplusplus")
+  set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler  /Zc:__cplusplus")
+
   set(CMAKE_NINJA_CMCLDEPS_RC OFF)
   foreach(flag_var
       CMAKE_C_FLAGS CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELEASE
