@@ -19,6 +19,7 @@ import torch._refs
 import torch.fx
 import torch.nn
 import torch.onnx.operators
+import torch.utils._pytree as pytree
 from torch._dynamo.variables import UserFunctionVariable
 
 from .. import config, variables
@@ -662,6 +663,14 @@ For now, dynamo will explicitly graph break when it encounters user code with th
                 )
                 args = [stacked]
 
+            flat_args, _ = pytree.tree_flatten((args, kwargs))
+            tensor_var_to_grad = {}
+            for arg in flat_args:
+                if isinstance(arg, TensorVariable):
+                    tensor_var_to_grad[arg] = (
+                        arg.as_proxy().node.meta["example_value"].grad
+                    )
+
             # TODO(voz): Replace w/ dynamic shape rewrite table.
             # Ideally, we would be able to do this at ctor time, but alas we need a combination
             # of value + args to determine this.
@@ -708,6 +717,45 @@ For now, dynamo will explicitly graph break when it encounters user code with th
                 ),
                 **options,
             )
+            # Note - you could ostensibly move this entire flow to operate on every single
+            # fake run node (see get_fake_value in utils) - however, it would require a lot of
+            # plumbing to get sources in place there (as it extracts args from the op).
+            # This location is a safe blend of convenience, soundness, and ease of use. This should cover
+            # all ops.
+            flat_args_post_op, _ = pytree.tree_flatten((args, kwargs))
+            for arg in flat_args_post_op:
+                if arg in tensor_var_to_grad:
+                    new_grad = arg.as_proxy().node.meta["example_value"].grad
+                    old_grad = tensor_var_to_grad[arg]
+
+                    def _grad_changed(old, new):
+                        if old is None:
+                            return new is not None
+                        if old.shape != new.shape:
+                            return True
+                        if old.stride() != new.stride():
+                            return True
+                        return False
+
+                    if _grad_changed(old_grad, new_grad):
+                        # Grad changed from running this op
+                        for grapharg in tx.output.graphargs:
+                            if grapharg.source == arg.source:
+                                # Why do we do this? Because if a grad started out as None, and we have n accumulate_grad_
+                                # in the graph, we will not properly update the grapharg.example. This grapharg.example is load
+                                # bearing in that in builtins.py we try to use it as a hint for what the underlying value of
+                                # grad is when accessed.
+                                # This is fine in most cases, EXCEPT when something in the graph sets the grad, in our case,
+                                # accumulate_grad_. In our case, the initial None value is no longer correct.
+                                # By setting it to a dummy zeros tensor, we are guaranteed to have a valid tensor here to coerce
+                                # the creation of basically
+                                # a dummy TensorVariable instead of a ConstantVariable.
+                                grad_shape_specialized = [
+                                    int(x) for x in new_grad.shape
+                                ]
+                                grapharg.example.grad = torch.zeros(
+                                    grad_shape_specialized, device=new_grad.device
+                                )
 
             if "out" in kwargs and not (
                 isinstance(kwargs["out"], variables.ConstantVariable)
@@ -739,7 +787,6 @@ For now, dynamo will explicitly graph break when it encounters user code with th
                         tx.symbolic_locals[name] = tensor_variable
                 else:
                     unimplemented(f"out variant of {type(kwargs['out'])}")
-
             return tensor_variable
 
     def _call_cross_entropy_loss(self, tx, args, kwargs, options):
